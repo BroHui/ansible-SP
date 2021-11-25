@@ -1,0 +1,102 @@
+---
+- name: Ubuntu20.04安装Docker化
+  hosts: all
+  user: ubuntu
+  become: yes
+  vars:
+    docker_compose_version: "1.29.2"
+  tasks:
+    - name: 升级Apt
+      apt:
+        update_cache: yes
+
+    - name: 安装必要Repository
+      apt:
+        pkg:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - apt-transport-https
+          - software-properties-common
+          - python3-pip
+          - virtualenv
+          - python3-setuptools
+          - iptables-persistent
+          - netscript-ipfilter
+
+    - name: Add Docker GPG apt Key
+      apt_key:
+        url: https://mirrors.cloud.tencent.com/docker-ce/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker Repository
+      apt_repository:
+        repo: deb [arch=amd64] https://mirrors.cloud.tencent.com/docker-ce/linux/ubuntu   focal stable
+        state: present
+
+    - name: 安装Docker
+      apt:
+        update_cache: yes
+        pkg:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+
+    - name: 添加用户到Docker组
+      user:
+        name: "{{ansible_user}}"
+        group: docker
+
+    # - name: Download docker-compose {{ docker_compose_version }}
+    #   get_url:
+    #     url: https://github.com/docker/compose/releases/download/{{ docker_compose_version }}/docker-compose-Linux-x86_64
+    #     dest: ~/docker-compose
+    #     mode: "+x"
+
+    # - name: Check docker-compose exists
+    #   stat: path=~/docker-compose
+    #   register: docker_compose
+
+    # - name: Move docker-compose to /usr/local/bin/docker-compose
+    #   command: mv ~/docker-compose /usr/local/bin/docker-compose
+    #   when: docker_compose.stat.exists
+
+    - name: 安装Docker Compose
+      pip:
+        name: docker-compose
+        version: "{{ docker_compose_version }}"
+
+    - name: 禁用Docker的iptables模块
+      replace:
+        path: /lib/systemd/system/docker.service
+        regexp: "^ExecStart=.*?$"
+        replace: ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock --iptables=false
+
+    - name: 布置iptables规则
+      ansible.builtin.template:
+        src: ./rules.v4
+        dest: /etc/iptables/rules.v4
+        mode: 0644
+        owner: root
+        group: root
+    
+    - name: 启用iptables规则
+      ansible.builtin.shell: netfilter-persistent reload
+
+    - name: 启动Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+
+    - name: 修改Sysctl配置
+      ansible.builtin.template:
+        src: ./sysctl.conf
+        dest: /etc/sysctl.conf
+        mode: 0644
+        owner: root
+        group: root
+    
+    - name: 应用Sysctl配置
+      ansible.builtin.shell: sysctl -p
